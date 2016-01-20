@@ -1,7 +1,8 @@
 
-
-from PyQt5.QtCore import *
-from PyQt5.QtWidgets import *
+#from PyQt5.QtCore import *
+#from PyQt5.QtWidgets import *
+from PyQt5.QtCore import pyqtSlot, QSettings, QTimer, QUrl, QDir
+from PyQt5.QtWidgets import QMainWindow, QFileDialog, QMessageBox, QApplication
 from PyQt5.QtWebKitWidgets import QWebView
 
 import sys
@@ -15,6 +16,7 @@ SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
+#setup logging
 logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
                     format='[%(levelname)s] (%(threadName)-10s) %(message)s')
 
@@ -22,26 +24,16 @@ logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
 def log(message):
     logging.debug(message)
 
-
-#setup application
-app = QApplication(sys.argv)
-app.setApplicationName("JupyterQt")
-app.setOrganizationDomain("fishandwhistle.net")
+#setup GUI elements
 
 class CustomWebView(QWebView):
 
-    def __init__(self, parent=None):
+    def __init__(self, mainwindow, main=False):
         super(CustomWebView, self).__init__(None)
-        self.parent = parent
-        if parent is None:
-            self.windows = []
+        self.parent = mainwindow
+        self.main = main
         self.loadedPage = None
         self.loadFinished.connect(self.onpagechange)
-
-        settings = QSettings()
-        val = settings.value(SETTING_GEOMETRY, None)
-        if val is not None:
-            self.restoreGeometry(val)
 
     @pyqtSlot(bool)
     def onpagechange(self, ok):
@@ -58,8 +50,8 @@ class CustomWebView(QWebView):
             self.back()
 
     def createWindow(self, windowtype):
-        v = CustomWebView(self if self.parent is None else self.parent)
-        windows = self.windows if self.parent is None else self.parent.windows
+        v = CustomWebView(self.parent)
+        windows = self.parent.windows
         windows.append(v)
         cur = self.pos()
         #offset window slightly from current
@@ -74,36 +66,54 @@ class CustomWebView(QWebView):
             log("disconnecting on close signal")
             self.loadedPage.windowCloseRequested.disconnect(self.close)
 
-        if self.parent is None:
-            if self.windows:
-                if QMessageBox.Ok == QMessageBox.information(self,
-                                                         "Really Close?",
-                                                         "Really close %s windows?" % (len(self.windows)+1),
-                                                         QMessageBox.Cancel | QMessageBox.Ok):
-                    for i in reversed(range(len(self.windows))):
-                        w = self.windows.pop(i)
-                        w.close()
-                    event.accept()
-                else:
-                    event.ignore()
-                    return
-            else:
-                event.accept()
-
-            #save geometry
-            settings = QSettings()
-            settings.setValue(SETTING_GEOMETRY, self.saveGeometry())
-        else:
+        if not self.main:
             if self in self.parent.windows:
                 self.parent.windows.remove(self)
             log("Window count: %s" % (len(self.parent.windows)+1))
-            event.accept()
+        event.accept()
+
 
 class MainWindow(QMainWindow):
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, homepage=None):
         super(MainWindow, self).__init__(parent)
-        self.basewebview = None
+        self.homepage = homepage
+        self.windows = []
+
+        settings = QSettings()
+        val = settings.value(SETTING_GEOMETRY, None)
+        if val is not None:
+            self.restoreGeometry(val)
+
+        self.basewebview = CustomWebView(self, main=True)
+        self.setCentralWidget(self.basewebview)
+        QTimer.singleShot(0, self.initialload)
+
+    @pyqtSlot()
+    def initialload(self):
+        if self.homepage:
+            self.basewebview.load(QUrl(self.homepage))
+        self.show()
+
+    def closeEvent(self, event):
+        if self.windows:
+            if QMessageBox.Ok == QMessageBox.information(self,
+                                                     "Really Close?",
+                                                     "Really close %s windows?" % (len(self.windows)+1),
+                                                     QMessageBox.Cancel | QMessageBox.Ok):
+                for i in reversed(range(len(self.windows))):
+                    w = self.windows.pop(i)
+                    w.close()
+                event.accept()
+            else:
+                event.ignore()
+                return
+        else:
+            event.accept()
+
+        #save geometry
+        settings = QSettings()
+        settings.setValue(SETTING_GEOMETRY, self.saveGeometry())
 
 #notebook subprocess stuff
 def testnotebook(notebook_executable="jupyter-notebook"):
@@ -115,8 +125,13 @@ def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=Q
                             "--notebook-dir=%s" % directory], bufsize=1,
                             stderr=subprocess.PIPE)
 
-#start notebook
+#setup application
 log("starting application...")
+
+app = QApplication(sys.argv)
+app.setApplicationName("JupyterQt")
+app.setOrganizationDomain("fishandwhistle.net")
+
 
 s = QSettings()
 execname = s.value(SETTING_EXECUTABLE, "jupyter-notebook")
@@ -175,9 +190,7 @@ notebookmonitor.start()
 
 log("Setting up GUI")
 #setup webview
-view = CustomWebView()
-view.load(QUrl(webaddr))
-view.show()
+view = MainWindow(None, homepage=webaddr)
 
 log("Starting Qt Event Loop")
 result = app.exec_()
