@@ -16,10 +16,22 @@ SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
-#setup logging
-logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
-                    format='[%(levelname)s] (%(threadName)-10s) %(message)s')
-
+#try to open a file in the current directory
+logfile = "jupyterQt.log"
+try:
+    f = open(logfile, "a")
+    f.close()
+except IOError:
+    #current dir is not writable. try the Resources bit
+    try:
+        f = open("../Resources/jupyterQt.log", "a")
+        f.close()
+        logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
+                 format='[%(levelname)s] (%(threadName)-10s) %(message)s')
+    except IOError:
+        #don't log to file
+        logging.basicConfig(level=logging.DEBUG,
+                 format='[%(levelname)s] (%(threadName)-10s) %(message)s')
 
 def log(message):
     logging.debug(message)
@@ -120,10 +132,11 @@ def testnotebook(notebook_executable="jupyter-notebook"):
     return 0 == os.system("%s --version" % notebook_executable)
 
 def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=QDir.homePath()):
-    return subprocess.Popen(["jupyter-notebook",
+    return subprocess.Popen([notebook_executable,
                             "--port=%s" % port, "--browser=n", "-y",
                             "--notebook-dir=%s" % directory], bufsize=1,
                             stderr=subprocess.PIPE)
+                            #it is necessary to redirect all 3 or .app does not open
 
 #setup application
 log("starting application...")

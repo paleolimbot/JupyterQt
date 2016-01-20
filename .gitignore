@@ -1,2 +1,5 @@
 .idea/
 jupyterQt.log
+build/
+dist/
+JupyterQt.app/
