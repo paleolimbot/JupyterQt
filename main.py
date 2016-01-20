@@ -12,16 +12,19 @@ import matplotlib
 
 import sys
 import subprocess
+import signal
 import time
 
+SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
+SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 
-
+#setup application
 app = QApplication(sys.argv)
 app.setApplicationName("JupyterQt")
 app.setOrganizationDomain("fishandwhistle.net")
 
-#start jupyter notebook
-def startnotebook(port=8888, directory="~"):
+
+def startnotebook(port=8888, directory=QDir.homePath()):
     return subprocess.Popen(["jupyter", "notebook",
                             "--port=%s" % port, "--browser=n", "-y",
                             "--notebook-dir=%s" % directory])
@@ -37,6 +40,11 @@ class CustomWebView(QWebView):
         self.loadedPage = None
         self.loadFinished.connect(self.onpagechange)
 
+        settings = QSettings()
+        val = settings.value(SETTING_GEOMETRY, None)
+        if val is not None:
+            self.restoreGeometry(val)
+
     @pyqtSlot(bool)
     def onpagechange(self, ok):
         if self.loadedPage is not None:
@@ -45,14 +53,19 @@ class CustomWebView(QWebView):
         self.loadedPage = self.page()
         print("connecting on close signal")
         self.loadedPage.windowCloseRequested.connect(self.close)
+        #self.loadedPage.setLinkDelegationPolicy(QWebPage.DelegateAllLinks)
         self.setWindowTitle(self.title())
+        if not ok:
+            QMessageBox.information(self, "Error", "Error loading page!", QMessageBox.Ok)
+            self.back()
 
     def createWindow(self, windowtype):
         v = CustomWebView(self if self.parent is None else self.parent)
         windows = self.windows if self.parent is None else self.parent.windows
         windows.append(v)
         v.show()
-        print("Window count: self + %s" % (len(windows)+1))
+        print("Window count: %s" % (len(windows)+1))
+
         return v
 
     def closeEvent(self, event):
@@ -72,23 +85,44 @@ class CustomWebView(QWebView):
                     event.accept()
                 else:
                     event.ignore()
+                    return
             else:
                 event.accept()
+
+            #save geometry
+            settings = QSettings()
+            settings.setValue(SETTING_GEOMETRY, self.saveGeometry())
         else:
             if self in self.parent.windows:
                 self.parent.windows.remove(self)
-            print("Window count: self + %s" % (len(self.parent.windows)+1))
+            print("Window count: %s" % (len(self.parent.windows)+1))
             event.accept()
 
 #start notebook
-notebookp = startnotebook()
+portnum = 8888
+s = QSettings()
+directory = QFileDialog.getExistingDirectory(None, "Choose a directory for Jupyter", s.value(SETTING_BASEDIR, QDir.homePath()))
+if not directory:
+    #user hit cancel
+    print("User cancelled file dialog, closing.")
+    sys.exit(0)
+
+s.setValue(SETTING_BASEDIR, directory)
+notebookp = startnotebook(portnum, directory)
 
 #setup webview
 view = CustomWebView()
 time.sleep(3) #let server get setup, isn't always long enough
-view.load(QUrl("http://localhost:8888/"))
+view.load(QUrl("http://localhost:%s/" % portnum))
 view.show()
 result = app.exec_()
 
-notebookp.terminate()
+notebookp.send_signal(signal.SIGINT)
+try:
+    print("Waiting for jupyter to exit...")
+    notebookp.wait(10)
+except TimeoutError:
+    print("control c timed out, killing")
+    notebookp.kill()
+
 sys.exit(result)
