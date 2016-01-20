@@ -1,3 +1,2 @@
 .idea/
-*.ipynb
-.ipynb_checkpoints
+jupyterQt.log

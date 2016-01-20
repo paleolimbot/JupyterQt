@@ -8,26 +8,25 @@ import sys
 import os
 import subprocess
 import signal
-import time
+import logging
+import threading
 
 SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
+logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
+                    format='[%(levelname)s] (%(threadName)-10s) %(message)s')
+
+
+def log(message):
+    logging.debug(message)
+
+
 #setup application
 app = QApplication(sys.argv)
 app.setApplicationName("JupyterQt")
 app.setOrganizationDomain("fishandwhistle.net")
-
-
-def testnotebook(notebook_executable="jupyter-notebook"):
-    return 0 == os.system("%s --version" % notebook_executable)
-
-def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=QDir.homePath()):
-    return subprocess.Popen(["jupyter-notebook",
-                            "--port=%s" % port, "--browser=n", "-y",
-                            "--notebook-dir=%s" % directory])
-
 
 class CustomWebView(QWebView):
 
@@ -47,10 +46,10 @@ class CustomWebView(QWebView):
     @pyqtSlot(bool)
     def onpagechange(self, ok):
         if self.loadedPage is not None:
-            print("disconnecting on close signal signal")
+            log("disconnecting on close signal signal")
             self.loadedPage.windowCloseRequested.disconnect(self.close)
         self.loadedPage = self.page()
-        print("connecting on close signal")
+        log("connecting on close signal")
         self.loadedPage.windowCloseRequested.connect(self.close)
         #self.loadedPage.setLinkDelegationPolicy(QWebPage.DelegateAllLinks)
         self.setWindowTitle(self.title())
@@ -66,13 +65,13 @@ class CustomWebView(QWebView):
         #offset window slightly from current
         v.setGeometry(cur.x()+40, cur.y()+40, self.width(), self.height())
         v.show()
-        print("Window count: %s" % (len(windows)+1))
+        log("Window count: %s" % (len(windows)+1))
 
         return v
 
     def closeEvent(self, event):
         if self.loadedPage is not None:
-            print("disconnecting on close signal")
+            log("disconnecting on close signal")
             self.loadedPage.windowCloseRequested.disconnect(self.close)
 
         if self.parent is None:
@@ -97,7 +96,7 @@ class CustomWebView(QWebView):
         else:
             if self in self.parent.windows:
                 self.parent.windows.remove(self)
-            print("Window count: %s" % (len(self.parent.windows)+1))
+            log("Window count: %s" % (len(self.parent.windows)+1))
             event.accept()
 
 class MainWindow(QMainWindow):
@@ -106,7 +105,19 @@ class MainWindow(QMainWindow):
         super(MainWindow, self).__init__(parent)
         self.basewebview = None
 
+#notebook subprocess stuff
+def testnotebook(notebook_executable="jupyter-notebook"):
+    return 0 == os.system("%s --version" % notebook_executable)
+
+def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=QDir.homePath()):
+    return subprocess.Popen(["jupyter-notebook",
+                            "--port=%s" % port, "--browser=n", "-y",
+                            "--notebook-dir=%s" % directory], bufsize=1,
+                            stderr=subprocess.PIPE)
+
 #start notebook
+log("starting application...")
+
 s = QSettings()
 execname = s.value(SETTING_EXECUTABLE, "jupyter-notebook")
 if not testnotebook(execname):
@@ -123,33 +134,62 @@ if not testnotebook(execname):
         else:
             execname = execname[0]
             if testnotebook(execname):
-                print("Jupyter found at %s" % execname)
+                log("Jupyter found at %s" % execname)
                 #save setting
                 s.setValue(SETTING_EXECUTABLE, execname)
                 break
 
 
+log("Setting home directory...")
 portnum = 8888
 directory = s.value(SETTING_BASEDIR, QDir.homePath())
 if not os.path.isdir(directory):
-    print("Directory %s not found, defaulting to home directory" % directory)
+    log("Directory %s not found, defaulting to home directory" % directory)
     directory = QDir.homePath()
 
+log("Starting Jupyter notebook process")
+#start jupyter notebook and wait for line with the web address
 notebookp = startnotebook(execname, portnum, directory)
 
+log("Waiting for server to start...")
+webaddr = None
+while webaddr is None:
+    line = str(notebookp.stderr.readline())
+    log(line)
+    if "http://" in line:
+        start = line.find("http://")
+        end = line.find("/", start+len("http://"))
+        webaddr = line[start:end]
+
+log("Server found at %s, migrating monitoring to listener thread" % webaddr)
+#pass monitoring over to child thread
+def process_thread_pipe(process):
+    while process.poll() is None: #while process is still alive
+        log(str(process.stderr.readline()))
+    log("Final output:")
+    log(process.communicate())
+
+notebookmonitor = threading.Thread(name="Notebook Monitor", target=process_thread_pipe,
+                                   args = (notebookp,), daemon=True)
+notebookmonitor.start()
+
+log("Setting up GUI")
 #setup webview
 view = CustomWebView()
-time.sleep(3) #let server get setup, isn't always long enough TODO need to find actual port from messages
-view.load(QUrl("http://localhost:%s/" % portnum))
+view.load(QUrl(webaddr))
 view.show()
-result = app.exec_()
 
+log("Starting Qt Event Loop")
+result = app.exec_()
+log("Exiting..sending interrupt signal to jupyter-notebook")
 notebookp.send_signal(signal.SIGINT)
 try:
-    print("Waiting for jupyter to exit...")
+    log("Waiting for jupyter to exit...")
     notebookp.wait(10)
+    log("Waiting for monitor thread to join...")
+    notebookmonitor.join(10)
 except TimeoutError:
-    print("control c timed out, killing")
+    log("control c timed out, killing")
     notebookp.kill()
 
 sys.exit(result)
