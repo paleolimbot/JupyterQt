@@ -2,21 +2,17 @@
 
 from PyQt5.QtCore import *
 from PyQt5.QtWidgets import *
-from PyQt5.QtWebKitWidgets import QWebView, QWebPage
-from PyQt5.QtGui import QDesktopServices
-
-#imports to keep dependencies in
-import jupyter, jupyter_client, jupyter_console, jupyter_core
-import numpy
-import matplotlib
+from PyQt5.QtWebKitWidgets import QWebView
 
 import sys
+import os
 import subprocess
 import signal
 import time
 
 SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
+SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
 #setup application
 app = QApplication(sys.argv)
@@ -24,8 +20,11 @@ app.setApplicationName("JupyterQt")
 app.setOrganizationDomain("fishandwhistle.net")
 
 
-def startnotebook(port=8888, directory=QDir.homePath()):
-    return subprocess.Popen(["jupyter", "notebook",
+def testnotebook(notebook_executable="jupyter-notebook"):
+    return 0 == os.system("%s --version" % notebook_executable)
+
+def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=QDir.homePath()):
+    return subprocess.Popen(["jupyter-notebook",
                             "--port=%s" % port, "--browser=n", "-y",
                             "--notebook-dir=%s" % directory])
 
@@ -101,21 +100,46 @@ class CustomWebView(QWebView):
             print("Window count: %s" % (len(self.parent.windows)+1))
             event.accept()
 
-#start notebook
-portnum = 8888
-s = QSettings()
-directory = QFileDialog.getExistingDirectory(None, "Choose a directory for Jupyter", s.value(SETTING_BASEDIR, QDir.homePath()))
-if not directory:
-    #user hit cancel
-    print("User cancelled file dialog, closing.")
-    sys.exit(0)
+class MainWindow(QMainWindow):
 
-s.setValue(SETTING_BASEDIR, directory)
-notebookp = startnotebook(portnum, directory)
+    def __init__(self, parent=None):
+        super(MainWindow, self).__init__(parent)
+        self.basewebview = None
+
+#start notebook
+s = QSettings()
+execname = s.value(SETTING_EXECUTABLE, "jupyter-notebook")
+if not testnotebook(execname):
+    while True:
+        QMessageBox.information(None, "Error", "It appears that Jupyter Notebook isn't where it usually is. " +
+                                "Ensure you've installed Jupyter correctly and then press Ok to " +
+                                "find the executable 'jupyter-notebook'", QMessageBox.Ok)
+        if testnotebook(execname):
+            break
+        execname = QFileDialog.getOpenFileName(None, "Find jupyter-notebook executable", QDir.homePath())
+        if not execname:
+            # user hit cancel
+            sys.exit(0)
+        else:
+            execname = execname[0]
+            if testnotebook(execname):
+                print("Jupyter found at %s" % execname)
+                #save setting
+                s.setValue(SETTING_EXECUTABLE, execname)
+                break
+
+
+portnum = 8888
+directory = s.value(SETTING_BASEDIR, QDir.homePath())
+if not os.path.isdir(directory):
+    print("Directory %s not found, defaulting to home directory" % directory)
+    directory = QDir.homePath()
+
+notebookp = startnotebook(execname, portnum, directory)
 
 #setup webview
 view = CustomWebView()
-time.sleep(3) #let server get setup, isn't always long enough
+time.sleep(3) #let server get setup, isn't always long enough TODO need to find actual port from messages
 view.load(QUrl("http://localhost:%s/" % portnum))
 view.show()
 result = app.exec_()
