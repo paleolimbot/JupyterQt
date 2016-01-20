@@ -63,6 +63,9 @@ class CustomWebView(QWebView):
         v = CustomWebView(self if self.parent is None else self.parent)
         windows = self.windows if self.parent is None else self.parent.windows
         windows.append(v)
+        cur = self.pos()
+        #offset window slightly from current
+        v.setGeometry(cur.x()+40, cur.y()+40, self.width(), self.height())
         v.show()
         print("Window count: %s" % (len(windows)+1))
 
