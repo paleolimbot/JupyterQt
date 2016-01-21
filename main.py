@@ -1,9 +1,12 @@
 
 #from PyQt5.QtCore import *
 #from PyQt5.QtWidgets import *
+from subprocess import TimeoutExpired
+
 from PyQt5.QtCore import pyqtSlot, QSettings, QTimer, QUrl, QDir
+from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QMainWindow, QFileDialog, QMessageBox, QApplication
-from PyQt5.QtWebKitWidgets import QWebView
+from PyQt5.QtWebKitWidgets import QWebView, QWebPage
 
 import sys
 import os
@@ -13,12 +16,19 @@ import logging
 import threading
 import time
 
+DEBUG = True
+
 SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
-#setup GUI elements
+#setup application
+app = QApplication(sys.argv)
+app.setApplicationName("JupyterQt")
+app.setOrganizationDomain("fishandwhistle.net")
 
+
+#setup GUI elements
 class CustomWebView(QWebView):
 
     def __init__(self, mainwindow, main=False):
@@ -28,36 +38,90 @@ class CustomWebView(QWebView):
         self.loadedPage = None
         self.loadFinished.connect(self.onpagechange)
 
+
     @pyqtSlot(bool)
     def onpagechange(self, ok):
+        log("on page change: %s, %s" % (self.url(), ok))
         if self.loadedPage is not None:
-            log("disconnecting on close signal signal")
+            log("disconnecting on close and linkclicked signal")
             self.loadedPage.windowCloseRequested.disconnect(self.close)
+            self.loadedPage.linkClicked.disconnect(self.handlelink)
+
+        log("connecting on close and linkclicked signal")
         self.loadedPage = self.page()
-        log("connecting on close signal")
+        self.loadedPage.setLinkDelegationPolicy(QWebPage.DelegateAllLinks)
         self.loadedPage.windowCloseRequested.connect(self.close)
-        #self.loadedPage.setLinkDelegationPolicy(QWebPage.DelegateAllLinks)
+        self.loadedPage.linkClicked.connect(self.handlelink)
         self.setWindowTitle(self.title())
         if not ok:
             QMessageBox.information(self, "Error", "Error loading page!", QMessageBox.Ok)
-            self.back()
 
-    def createWindow(self, windowtype):
+    @pyqtSlot(QUrl)
+    def handlelink(self, url):
+        urlstr = url.toString()
+        log("handling link : %s" % urlstr)
+        #check if url is for the current page
+        if url.matches(self.url(), QUrl.RemoveFragment):
+            #do nothing, probably a JS link
+            return False
+
+        #check if url is for the homepage
+        if url.matches(QUrl(self.parent.homepage + "/tree"), QUrl.RemoveFragment | QUrl.StripTrailingSlash):
+            if self.main:
+                self.load(url)
+                return True
+            else:
+                self.parent.basewebview.load(url)
+                self.parent.raise_()
+                self.parent.activateWindow()
+                return True
+
+        #check other windows to see if url is loaded there
+        for window in self.parent.windows:
+            if url.matches(window.url(), QUrl.RemoveFragment):
+                window.raise_()
+                window.activateWindow()
+
+            #if this is a tree window and not the main one, close it
+            if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
+                QTimer.singleShot(0, self.close) #calling self.close() is no good
+                return True
+
+        if "/files/" in urlstr:
+            #save, don't load new page
+            self.parent.savefile(url)
+            return True
+        elif "/tree/" in urlstr:
+            #keep in same window
+            self.load(url)
+            return True
+        else:
+            #open in new window
+            newwindow = self.createWindow(QWebPage.WebBrowserWindow, js=False)
+            newwindow.load(url)
+
+            #if this is a tree window and not the main one, close it
+            if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
+                QTimer.singleShot(0, self.close) #calling self.close() is no good
+            return True
+
+
+    def createWindow(self, windowtype, js=True):
         v = CustomWebView(self.parent)
         windows = self.parent.windows
         windows.append(v)
         cur = self.pos()
         #offset window slightly from current
         v.setGeometry(cur.x()+40, cur.y()+40, self.width(), self.height())
-        v.show()
         log("Window count: %s" % (len(windows)+1))
-
+        v.show()
         return v
 
     def closeEvent(self, event):
         if self.loadedPage is not None:
-            log("disconnecting on close signal")
+            log("disconnecting on close and linkClicked signals")
             self.loadedPage.windowCloseRequested.disconnect(self.close)
+            self.loadedPage.linkClicked.disconnect(self.handlelink)
 
         if not self.main:
             if self in self.parent.windows:
@@ -87,6 +151,9 @@ class MainWindow(QMainWindow):
         if self.homepage:
             self.basewebview.load(QUrl(self.homepage))
         self.show()
+
+    def savefile(self, url):
+        pass
 
     def closeEvent(self, event):
         if self.windows:
@@ -119,10 +186,6 @@ def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=Q
                             stderr=subprocess.PIPE)
                             #it is necessary to redirect all 3 or .app does not open
 
-#setup application
-app = QApplication(sys.argv)
-app.setApplicationName("JupyterQt")
-app.setOrganizationDomain("fishandwhistle.net")
 
 #try to open a file in the current directory
 logfile = os.path.join(str(QDir.homePath()), ".JupyterQt", "JupyterQt.log")
@@ -130,6 +193,8 @@ if not os.path.isdir(os.path.dirname(logfile)):
     os.mkdir(os.path.dirname(logfile))
 logfileformat = '[%(levelname)s] (%(threadName)-10s) %(message)s'
 try:
+    if DEBUG:
+        raise IOError() #force logging to console
     f = open(logfile, "a")
     f.close()
     logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
@@ -189,8 +254,6 @@ log("Server found at %s, migrating monitoring to listener thread" % webaddr)
 def process_thread_pipe(process):
     while process.poll() is None: #while process is still alive
         log(str(process.stderr.readline()))
-    log("Final output:")
-    log(process.communicate())
 
 notebookmonitor = threading.Thread(name="Notebook Monitor", target=process_thread_pipe,
                                    args = (notebookp,), daemon=True)
@@ -202,19 +265,18 @@ view = MainWindow(None, homepage=webaddr)
 
 log("Starting Qt Event Loop")
 result = app.exec_()
-log("Exiting..sending interrupt signal to jupyter-notebook")
-#two interrupts, in case -y didn't actually kill the process
+
+log("Sending interrupt signal to jupyter-notebook")
 notebookp.send_signal(signal.SIGINT)
-time.sleep(0.5)
-if notebookp.poll() is None:
-    notebookp.send_signal(signal.SIGINT)
 try:
     log("Waiting for jupyter to exit...")
     notebookp.wait(10)
-    log("Waiting for monitor thread to join...")
-    notebookmonitor.join(10)
-except TimeoutError:
+    log("Final output:")
+    log(notebookp.communicate())
+
+except subprocess.TimeoutExpired:
     log("control c timed out, killing")
     notebookp.kill()
+
 log("Exited.")
 sys.exit(result)
