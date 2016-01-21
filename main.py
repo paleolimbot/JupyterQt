@@ -17,27 +17,6 @@ SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
 SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
-#try to open a file in the current directory
-logfile = "jupyterQt.log"
-logfileformat = '[%(levelname)s] (%(threadName)-10s) %(message)s'
-try:
-    f = open(logfile, "a")
-    f.close()
-    logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
-except IOError:
-    #current dir is not writable. try the Resources folder
-    try:
-        logfile = "../Resources/jupyterQt.log"
-        f = open(logfile, "a")
-        f.close()
-        logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
-    except IOError:
-        #don't log to file
-        logging.basicConfig(level=logging.DEBUG, format=logfileformat)
-
-def log(message):
-    logging.debug(message)
-
 #setup GUI elements
 
 class CustomWebView(QWebView):
@@ -141,11 +120,25 @@ def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=Q
                             #it is necessary to redirect all 3 or .app does not open
 
 #setup application
-log("starting application...")
-
 app = QApplication(sys.argv)
 app.setApplicationName("JupyterQt")
 app.setOrganizationDomain("fishandwhistle.net")
+
+#try to open a file in the current directory
+logfile = os.path.join(str(QDir.homePath()), ".JupyterQt", "JupyterQt.log")
+if not os.path.isdir(os.path.dirname(logfile)):
+    os.mkdir(os.path.dirname(logfile))
+logfileformat = '[%(levelname)s] (%(threadName)-10s) %(message)s'
+try:
+    f = open(logfile, "a")
+    f.close()
+    logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
+except IOError:
+    #no writable directory, log to console
+    logging.basicConfig(level=logging.DEBUG, format=logfileformat)
+
+def log(message):
+    logging.debug(message)
 
 
 s = QSettings()
