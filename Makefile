@@ -1,11 +1,11 @@
 
 
-osx: dist/main/JupyterQt.app
-dist/main/JupyterQt.app : main.spec
+osx: dist/JupyterQt.app/Contents/MacOS/main
+dist/JupyterQt.app/Contents/MacOS/main : main.spec
 	pyinstaller -w -y main.spec
 
 runosx: osx
-	open dist/main/JupyterQt.app
+	open dist/JupyterQt.app
 
 linux: dist/main/main
 dist/main/main : main.spec
