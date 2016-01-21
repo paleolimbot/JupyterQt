@@ -11,6 +11,7 @@ import subprocess
 import signal
 import logging
 import threading
+import time
 
 SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
 SETTING_GEOMETRY = "net.fishandwhistle/JupyterQt/geometry"
@@ -18,20 +19,21 @@ SETTING_EXECUTABLE = "net.fishandwhistle/JupyterQt/executable"
 
 #try to open a file in the current directory
 logfile = "jupyterQt.log"
+logfileformat = '[%(levelname)s] (%(threadName)-10s) %(message)s'
 try:
     f = open(logfile, "a")
     f.close()
+    logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
 except IOError:
-    #current dir is not writable. try the Resources bit
+    #current dir is not writable. try the Resources folder
     try:
-        f = open("../Resources/jupyterQt.log", "a")
+        logfile = "../Resources/jupyterQt.log"
+        f = open(logfile, "a")
         f.close()
-        logging.basicConfig(level=logging.DEBUG, filename="jupyterQt.log",
-                 format='[%(levelname)s] (%(threadName)-10s) %(message)s')
+        logging.basicConfig(level=logging.DEBUG, filename=logfile, format=logfileformat)
     except IOError:
         #don't log to file
-        logging.basicConfig(level=logging.DEBUG,
-                 format='[%(levelname)s] (%(threadName)-10s) %(message)s')
+        logging.basicConfig(level=logging.DEBUG, format=logfileformat)
 
 def log(message):
     logging.debug(message)
@@ -208,7 +210,11 @@ view = MainWindow(None, homepage=webaddr)
 log("Starting Qt Event Loop")
 result = app.exec_()
 log("Exiting..sending interrupt signal to jupyter-notebook")
+#two interrupts, in case -y didn't actually kill the process
 notebookp.send_signal(signal.SIGINT)
+time.sleep(0.5)
+if notebookp.poll() is None:
+    notebookp.send_signal(signal.SIGINT)
 try:
     log("Waiting for jupyter to exit...")
     notebookp.wait(10)
@@ -217,5 +223,5 @@ try:
 except TimeoutError:
     log("control c timed out, killing")
     notebookp.kill()
-
+log("Exited.")
 sys.exit(result)
