@@ -1,10 +1,8 @@
 
 #from PyQt5.QtCore import *
 #from PyQt5.QtWidgets import *
-from subprocess import TimeoutExpired
 
 from PyQt5.QtCore import pyqtSlot, QSettings, QTimer, QUrl, QDir
-from PyQt5.QtGui import QCloseEvent
 from PyQt5.QtWidgets import QMainWindow, QFileDialog, QMessageBox, QApplication
 from PyQt5.QtWebKitWidgets import QWebView, QWebPage
 
@@ -14,7 +12,6 @@ import subprocess
 import signal
 import logging
 import threading
-import time
 
 DEBUG = True
 
@@ -63,47 +60,34 @@ class CustomWebView(QWebView):
         #check if url is for the current page
         if url.matches(self.url(), QUrl.RemoveFragment):
             #do nothing, probably a JS link
-            return False
-
-        #check if url is for the homepage
-        if url.matches(QUrl(self.parent.homepage + "/tree"), QUrl.RemoveFragment | QUrl.StripTrailingSlash):
-            if self.main:
-                self.load(url)
-                return True
-            else:
-                self.parent.basewebview.load(url)
-                self.parent.raise_()
-                self.parent.activateWindow()
-                return True
+            return True
 
         #check other windows to see if url is loaded there
         for window in self.parent.windows:
             if url.matches(window.url(), QUrl.RemoveFragment):
                 window.raise_()
                 window.activateWindow()
-
-            #if this is a tree window and not the main one, close it
-            if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
-                QTimer.singleShot(0, self.close) #calling self.close() is no good
+                #if this is a tree window and not the main one, close it
+                if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
+                    QTimer.singleShot(0, self.close) #calling self.close() is no good
                 return True
 
         if "/files/" in urlstr:
             #save, don't load new page
             self.parent.savefile(url)
-            return True
-        elif "/tree/" in urlstr:
+        elif "/tree/" in urlstr or urlstr.startswith(self.parent.homepage + "/tree"):
             #keep in same window
             self.load(url)
-            return True
         else:
             #open in new window
             newwindow = self.createWindow(QWebPage.WebBrowserWindow, js=False)
             newwindow.load(url)
 
             #if this is a tree window and not the main one, close it
-            if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
-                QTimer.singleShot(0, self.close) #calling self.close() is no good
-            return True
+        if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
+            QTimer.singleShot(0, self.close) #calling self.close() is no good
+        return True
+
 
 
     def createWindow(self, windowtype, js=True):
