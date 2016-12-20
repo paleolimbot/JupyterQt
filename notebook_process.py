@@ -74,7 +74,6 @@ def stopnotebook():
         log("control c timed out, killing")
         _process.kill()
 
-
     _process = None
     _monitor = None
     _webaddr = None
