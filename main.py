@@ -12,6 +12,7 @@ import subprocess
 import signal
 import logging
 import threading
+import time
 
 DEBUG = True
 
@@ -68,14 +69,14 @@ class CustomWebView(QWebView):
                 window.raise_()
                 window.activateWindow()
                 #if this is a tree window and not the main one, close it
-                if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
+                if self.url().toString().startswith(self.parent.homepage + "tree") and not self.main:
                     QTimer.singleShot(0, self.close) #calling self.close() is no good
                 return True
 
         if "/files/" in urlstr:
             #save, don't load new page
             self.parent.savefile(url)
-        elif "/tree/" in urlstr or urlstr.startswith(self.parent.homepage + "/tree"):
+        elif "/tree/" in urlstr or urlstr.startswith(self.parent.homepage + "tree"):
             #keep in same window
             self.load(url)
         else:
@@ -165,7 +166,8 @@ def testnotebook(notebook_executable="jupyter-notebook"):
 
 def startnotebook(notebook_executable="jupyter-notebook", port=8888, directory=QDir.homePath()):
     return subprocess.Popen([notebook_executable,
-                            "--port=%s" % port, "--browser=n", "-y",
+                            "--port=%s" % port,
+                            "--config=\"%s\"" % os.path.join(os.path.dirname(__file__), 'jupyterqt_notebook_config.py'),
                             "--notebook-dir=%s" % directory], bufsize=1,
                             stderr=subprocess.PIPE)
                             #it is necessary to redirect all 3 or .app does not open
@@ -226,21 +228,21 @@ notebookp = startnotebook(execname, portnum, directory)
 log("Waiting for server to start...")
 webaddr = None
 while webaddr is None:
-    line = str(notebookp.stderr.readline())
+    line = notebookp.stderr.readline().decode('utf-8').strip()
     log(line)
     if "http://" in line:
         start = line.find("http://")
-        end = line.find("/", start+len("http://"))
-        webaddr = line[start:end]
+        # end = line.find("/", start+len("http://")) new notebook needs a token which is at the end of the line
+        webaddr = line[start:]
 
 log("Server found at %s, migrating monitoring to listener thread" % webaddr)
 #pass monitoring over to child thread
 def process_thread_pipe(process):
     while process.poll() is None: #while process is still alive
-        log(str(process.stderr.readline()))
+        log(process.stderr.readline().decode('utf-8').strip())
 
 notebookmonitor = threading.Thread(name="Notebook Monitor", target=process_thread_pipe,
-                                   args = (notebookp,), daemon=True)
+                                   args=(notebookp,), daemon=True)
 notebookmonitor.start()
 
 log("Setting up GUI")
@@ -254,6 +256,8 @@ log("Sending interrupt signal to jupyter-notebook")
 notebookp.send_signal(signal.SIGINT)
 try:
     log("Waiting for jupyter to exit...")
+    time.sleep(1)
+    notebookp.send_signal(signal.SIGINT)
     notebookp.wait(10)
     log("Final output:")
     log(notebookp.communicate())
