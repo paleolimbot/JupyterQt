@@ -7,7 +7,7 @@ from PyQt5.QtCore import QSettings, QDir, QObject, pyqtSignal, QUrl
 from PyQt5.QtWidgets import QFileDialog, QMessageBox, QApplication
 
 from logger import log, setup_logging, set_logger
-from gui import MainWindow, CustomWebView
+from gui import MainWindow
 from notebook_process import testnotebook, startnotebook, stopnotebook
 
 SETTING_BASEDIR = "net.fishandwhistle/JupyterQt/basedir"
@@ -61,22 +61,23 @@ file = None
 
 if len(sys.argv) > 1:
     directory = sys.argv[-1]
-    if os.path.isfile(directory) and not os.path.isdir(directory):
+    if os.path.isdir(directory):
+        pass
+    elif os.path.isfile(directory):
         file = os.path.basename(directory)
         directory = os.path.dirname(directory)
+    else:
+        # file not found
+        QMessageBox.information(None, "Error", "The file/directory %s was not found" % directory, QMessageBox.Ok)
+        directory = s.value(SETTING_BASEDIR, QDir.homePath())
 else:
     directory = s.value(SETTING_BASEDIR, QDir.homePath())
-
-if not os.path.isdir(directory):
-    log("Directory %s not found, defaulting to home directory" % directory)
-    QMessageBox.information(None, "Error", "The folder %s is not a directory" % directory, QMessageBox.Ok)
-    sys.exit(-1)
 
 
 log("Setting up GUI")
 # setup webview
 view = MainWindow(None, None)
-
+view.setWindowTitle("JupyterQt: %s" % directory)
 
 # redirect logging to view.loggerdock.log
 class QtLogger(QObject):
@@ -96,6 +97,11 @@ view.loadmain(webaddr)
 # if notebook file is trying to get opened, open that window as well
 if file is not None and file.endswith('.ipynb'):
     view.basewebview.handlelink(QUrl(webaddr + 'notebooks/' + file))
+elif file is not None and file.endswith('.jproj'):
+    pass
+else:
+    # unrecognized file type
+    QMessageBox.information(None, "Error", "File type of %s was unrecognized" % file, QMessageBox.Ok)
 
 log("Starting Qt Event Loop")
 result = app.exec_()
