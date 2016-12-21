@@ -99,7 +99,7 @@ if file is not None and file.endswith('.ipynb'):
     view.basewebview.handlelink(QUrl(webaddr + 'notebooks/' + file))
 elif file is not None and file.endswith('.jproj'):
     pass
-else:
+elif file is not None:
     # unrecognized file type
     QMessageBox.information(None, "Error", "File type of %s was unrecognized" % file, QMessageBox.Ok)
 
