@@ -94,7 +94,7 @@ webaddr = startnotebook(execname, directory=directory)
 view.loadmain(webaddr)
 
 # if notebook file is trying to get opened, open that window as well
-if file is not None:
+if file is not None and file.endswith('.ipynb'):
     view.basewebview.handlelink(QUrl(webaddr + 'notebooks/' + file))
 
 log("Starting Qt Event Loop")

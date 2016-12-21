@@ -1,6 +1,7 @@
 
 from PyQt5.QtCore import pyqtSlot, QSettings, QTimer, QUrl, Qt
-from PyQt5.QtWidgets import QMainWindow, QMessageBox, QDockWidget, QPlainTextEdit
+from PyQt5.QtGui import QCloseEvent
+from PyQt5.QtWidgets import QMainWindow, QMessageBox, QDockWidget, QPlainTextEdit, QTabWidget
 from PyQt5.QtWebKitWidgets import QWebView, QWebPage
 
 from logger import log
@@ -13,6 +14,7 @@ class LoggerDock(QDockWidget):
     def __init__(self, *args):
         super(LoggerDock, self).__init__(*args)
         self.textview = QPlainTextEdit(self)
+        self.textview.setReadOnly(True)
         self.setWidget(self.textview)
 
     @pyqtSlot(str)
@@ -25,6 +27,7 @@ class CustomWebView(QWebView):
     def __init__(self, mainwindow, main=False):
         super(CustomWebView, self).__init__(None)
         self.parent = mainwindow
+        self.tabIndex = -1
         self.main = main
         self.loadedPage = None
         self.loadFinished.connect(self.onpagechange)
@@ -43,6 +46,8 @@ class CustomWebView(QWebView):
         self.loadedPage.windowCloseRequested.connect(self.close)
         self.loadedPage.linkClicked.connect(self.handlelink)
         self.setWindowTitle(self.title())
+        if not self.main:
+            self.parent.tabs.setTabText(self.tabIndex, self.title())
         if not ok:
             QMessageBox.information(self, "Error", "Error loading page!", QMessageBox.Ok)
 
@@ -56,13 +61,13 @@ class CustomWebView(QWebView):
             return True
 
         # check other windows to see if url is loaded there
-        for window in self.parent.windows:
+        for i in range(len(self.parent.tabs)):
+            window = self.parent.tabs.widget(i)
             if url.matches(window.url(), QUrl.RemoveFragment):
-                window.raise_()
-                window.activateWindow()
+                self.parent.tabs.setCurrentIndex(i)
                 # if this is a tree window and not the main one, close it
                 if self.url().toString().startswith(self.parent.homepage + "tree") and not self.main:
-                    QTimer.singleShot(0, self.close) # calling self.close() is no good
+                    QTimer.singleShot(0, self.close)  # calling self.close() is no good
                 return True
 
         if "/files/" in urlstr:
@@ -73,24 +78,16 @@ class CustomWebView(QWebView):
             self.load(url)
         else:
             # open in new window
-            newwindow = self.createWindow(QWebPage.WebBrowserWindow, js=False)
+            newwindow = self.parent.createBrowserTab(QWebPage.WebBrowserWindow, js=False)
             newwindow.load(url)
 
-            # if this is a tree window and not the main one, close it
+        # if this is a tree window and not the main one, close it
         if self.url().toString().startswith(self.parent.homepage + "/tree") and not self.main:
             QTimer.singleShot(0, self.close) # calling self.close() is no good
         return True
 
-    def createWindow(self, windowtype, js=True):
-        v = CustomWebView(self.parent)
-        windows = self.parent.windows
-        windows.append(v)
-        cur = self.pos()
-        # offset window slightly from current
-        v.setGeometry(cur.x()+40, cur.y()+40, self.width(), self.height())
-        log("Window count: %s" % (len(windows)+1))
-        v.show()
-        return v
+    def createWindow(self, windowtype):
+        return self.parent.createBrowserTab(windowtype, js=True)
 
     def closeEvent(self, event):
         if self.loadedPage is not None:
@@ -113,7 +110,7 @@ class MainWindow(QMainWindow):
         self.windows = []
 
         self.loggerdock = LoggerDock("Log Message", self)
-        self.addDockWidget(Qt.BottomDockWidgetArea , self.loggerdock)
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.loggerdock)
 
         settings = QSettings()
         val = settings.value(SETTING_GEOMETRY, None)
@@ -121,11 +118,37 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(val)
 
         self.basewebview = CustomWebView(self, main=True)
-        self.setCentralWidget(self.basewebview)
+        self.windows.append(self.basewebview)
+        self.tabs = QTabWidget(self)
+        self.tabs.setTabsClosable(True)
+        self.tabs.setMovable(True)
+        self.tabs.tabCloseRequested.connect(self.destroyBrowserTab)
+        self.basewebview.tabIndex = self.tabs.addTab(self.basewebview, "File Browser")
+
+        self.setCentralWidget(self.tabs)
 
     def loadmain(self, homepage):
         self.homepage = homepage
         QTimer.singleShot(0, self.initialload)
+
+    def createBrowserTab(self, windowtype, js=True):
+        v = CustomWebView(self)
+        self.windows.append(v)
+        log("Window count: %s" % (len(self.windows)+1))
+        v.tabIndex = self.tabs.addTab(v, "Window %s" % (len(self.windows)+1))
+        self.tabs.setCurrentIndex(v.tabIndex)
+        return v
+
+    @pyqtSlot(int)
+    def destroyBrowserTab(self, which):
+        closeevent = QCloseEvent()
+        win = self.tabs.widget(which)
+        if win.main:
+            self.close()
+        else:
+            win.closeEvent(closeevent)
+            if closeevent.isAccepted():
+                self.tabs.removeTab(which)
 
     @pyqtSlot()
     def initialload(self):
@@ -137,11 +160,10 @@ class MainWindow(QMainWindow):
         pass
 
     def closeEvent(self, event):
-        if self.windows:
-            if QMessageBox.Ok == QMessageBox.information(self,
-                                                     "Really Close?",
-                                                     "Really close %s windows?" % (len(self.windows)+1),
-                                                     QMessageBox.Cancel | QMessageBox.Ok):
+        if len(self.windows) > 1:
+            if QMessageBox.Ok == QMessageBox.information(self, "Really Close?",
+                                                         "Really close %s tabs?" % (len(self.windows)),
+                                                         QMessageBox.Cancel | QMessageBox.Ok):
                 for i in reversed(range(len(self.windows))):
                     w = self.windows.pop(i)
                     w.close()
